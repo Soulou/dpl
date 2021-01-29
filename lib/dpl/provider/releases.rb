@@ -1,10 +1,15 @@
+require 'octokit'
+require 'mime-types'
+
 module DPL
   class Provider
     class Releases < Provider
       require 'pathname'
 
-      requires 'octokit'
-      requires 'mime-types', version: '~> 2.0'
+      BOOLEAN_PARAMS = %w(
+        draft
+        prerelease
+      )
 
       def travis_tag
         # Check if $TRAVIS_TAG is unset or set but empty
@@ -82,6 +87,8 @@ module DPL
         tag_matched = false
         release_url = nil
 
+        booleanize!(options)
+
         if options[:release_number]
           tag_matched = true
           release_url = "https://api.github.com/repos/" + slug + "/releases/" + options[:release_number]
@@ -96,26 +103,54 @@ module DPL
 
         #If for some reason GitHub hasn't already created a release for the tag, create one
         if tag_matched == false
-          release_url = api.create_release(slug, get_tag, options).rels[:self].href
+          release_url = api.create_release(slug, get_tag, options.merge({:draft => true})).rels[:self].href
         end
 
         files.each do |file|
-          already_exists = false
+          next unless File.file?(file)
+          existing_url = nil
           filename = Pathname.new(file).basename.to_s
           api.release(release_url).rels[:assets].get.data.each do |existing_file|
             if existing_file.name == filename
-              already_exists = true
+              existing_url = existing_file.url
             end
           end
-          if already_exists
-            log "#{filename} already exists, skipping."
+          if !existing_url
+            upload_file(file, filename, release_url)
+          elsif existing_url && options[:overwrite]
+            log "#{filename} already exists, overwriting."
+            api.delete_release_asset(existing_url)
+            upload_file(file, filename, release_url)
           else
-            content_type = MIME::Types.type_for(file).first.to_s
-            if content_type.empty?
-              # Specify the default content type, as it is required by GitHub
-              content_type = "application/octet-stream"
+            log "#{filename} already exists, skipping."
+          end
+        end
+
+        api.update_release(release_url, {:draft => false}.merge(options))
+      end
+
+      def upload_file(file, filename, release_url)
+        content_type = MIME::Types.type_for(file).first.to_s
+        if content_type.empty?
+          # Specify the default content type, as it is required by GitHub
+          content_type = "application/octet-stream"
+        end
+        api.upload_asset(release_url, file, {:name => filename, :content_type => content_type})
+      end
+
+      def booleanize!(opts)
+        opts.map do |k,v|
+          opts[k] = if BOOLEAN_PARAMS.include?(k.to_s.squeeze.downcase)
+            case v.to_s.downcase
+            when 'true'
+              true
+            when 'false'
+              false
+            else
+              v
             end
-            api.upload_asset(release_url, file, {:name => filename, :content_type => content_type})
+          else
+            v
           end
         end
       end

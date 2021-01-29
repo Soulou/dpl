@@ -1,10 +1,11 @@
+require 'json/pure'
+require 'puppet/face'
+require 'puppet_blacksmith'
+
 module DPL
   class Provider
     class PuppetForge < Provider
       require 'pathname'
-
-      requires 'puppet', :load => 'puppet/face'
-      requires 'puppet-blacksmith', :load => 'puppet_blacksmith'
 
       def modulefile
         @modulefile ||= Blacksmith::Modulefile.new
